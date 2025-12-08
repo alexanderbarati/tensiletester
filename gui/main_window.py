@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QGroupBox, QComboBox, QDoubleSpinBox,
     QStatusBar, QMessageBox, QFileDialog, QTabWidget, QFrame,
-    QSplitter, QSizePolicy
+    QSplitter, QSizePolicy, QScrollArea
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSlot
 from PyQt5.QtGui import QFont
@@ -24,6 +24,8 @@ import numpy as np
 import pandas as pd
 
 from serial_handler import SerialHandler, DataPoint, Status
+from config_model import TestConfiguration, ControlMode
+from config_dialog import ConfigDialog
 
 
 class MainWindow(QMainWindow):
@@ -38,6 +40,9 @@ class MainWindow(QMainWindow):
         # Serial handler
         self.serial = SerialHandler(self)
         self._setup_serial_connections()
+        
+        # Test configuration
+        self.config = TestConfiguration()
         
         # Test data storage
         self.test_data: List[DataPoint] = []
@@ -100,6 +105,35 @@ class MainWindow(QMainWindow):
         conn_layout.addWidget(self.refresh_btn)
         
         left_layout.addWidget(conn_group)
+        
+        # Test Configuration button - prominent
+        self.config_btn = QPushButton("⚙ TEST CONFIGURATION")
+        self.config_btn.setMinimumHeight(45)
+        self.config_btn.setStyleSheet("font-weight: bold;")
+        self.config_btn.clicked.connect(self._open_config_dialog)
+        left_layout.addWidget(self.config_btn)
+        
+        # Active config display
+        config_info = QGroupBox("Active Test")
+        config_info_layout = QGridLayout(config_info)
+        config_info_layout.setSpacing(4)
+        
+        config_info_layout.addWidget(QLabel("Sample:"), 0, 0)
+        self.sample_id_label = QLabel("-")
+        self.sample_id_label.setStyleSheet("color: #4fc3f7;")
+        config_info_layout.addWidget(self.sample_id_label, 0, 1)
+        
+        config_info_layout.addWidget(QLabel("Standard:"), 1, 0)
+        self.standard_label = QLabel("-")
+        self.standard_label.setStyleSheet("color: #888;")
+        config_info_layout.addWidget(self.standard_label, 1, 1)
+        
+        config_info_layout.addWidget(QLabel("Area:"), 2, 0)
+        self.area_label = QLabel("-")
+        self.area_label.setStyleSheet("color: #888;")
+        config_info_layout.addWidget(self.area_label, 2, 1)
+        
+        left_layout.addWidget(config_info)
         
         # Values display
         values_group = QGroupBox("Current Values")
@@ -307,6 +341,49 @@ class MainWindow(QMainWindow):
         widget.value_label = value_label
         
         return widget
+    
+    def _open_config_dialog(self):
+        """Open test configuration dialog."""
+        dialog = ConfigDialog(self.config, self)
+        if dialog.exec_():
+            self.config = dialog.get_config()
+            self._update_config_display()
+            self._apply_config_to_machine()
+    
+    def _update_config_display(self):
+        """Update the active config display labels."""
+        c = self.config
+        
+        # Sample ID
+        sample = c.metadata.sample_id if c.metadata.sample_id else "-"
+        self.sample_id_label.setText(sample)
+        
+        # Standard
+        std_name = c.metadata.test_standard.value.split(" - ")[0] if c.metadata.test_standard else "-"
+        self.standard_label.setText(std_name)
+        
+        # Cross-section area
+        area = c.specimen.cross_section_area
+        self.area_label.setText(f"{area:.2f} mm²")
+        
+        # Update parameter spinboxes from config
+        self.speed_spin.setValue(c.control.test_speed / 60.0)  # Convert mm/min to mm/s
+        self.max_force_spin.setValue(c.termination.max_force)
+        self.max_ext_spin.setValue(c.termination.max_extension)
+    
+    def _apply_config_to_machine(self):
+        """Send configuration to the machine."""
+        if not self.serial.is_connected():
+            return
+        
+        c = self.config
+        
+        # Send speed (convert mm/min to mm/s for the spinbox display)
+        self.serial.set_speed(c.control.test_speed / 60.0)
+        
+        # Send limits
+        self.serial.set_max_force(c.termination.max_force)
+        self.serial.set_max_extension(c.termination.max_extension)
     
     def _refresh_ports(self):
         """Refresh available serial ports."""
@@ -542,7 +619,7 @@ class MainWindow(QMainWindow):
         if not filename:
             return
         
-        # Create DataFrame
+        # Create DataFrame with test data
         df = pd.DataFrame([
             {
                 'Time (ms)': d.timestamp,
@@ -554,12 +631,57 @@ class MainWindow(QMainWindow):
             for d in self.test_data
         ])
         
+        # Create metadata DataFrame
+        c = self.config
+        metadata = {
+            'Parameter': [
+                'Sample ID', 'Batch ID', 'Operator', 'Customer', 'Project',
+                'Test Standard', 'Material Type', 'Material Name',
+                'Gauge Length (mm)', 'Thickness (mm)', 'Width (mm)', 'Cross-Section Area (mm²)',
+                'Test Speed (mm/min)', 'Max Force (N)', 'Max Extension (mm)',
+                'Temperature (°C)', 'Humidity (%RH)',
+                'Test Date'
+            ],
+            'Value': [
+                c.metadata.sample_id, c.metadata.batch_id, c.metadata.operator_name,
+                c.metadata.customer_name, c.metadata.project_name,
+                c.metadata.test_standard.value, c.metadata.material_type.value, c.metadata.material_name,
+                c.specimen.gauge_length, c.specimen.thickness, c.specimen.width, c.specimen.cross_section_area,
+                c.control.test_speed, c.termination.max_force, c.termination.max_extension,
+                c.environment.temperature, c.environment.humidity,
+                c.metadata.test_date.strftime("%Y-%m-%d %H:%M:%S")
+            ]
+        }
+        df_meta = pd.DataFrame(metadata)
+        
+        # Calculate results
+        if self.test_data:
+            max_force = max(d.force for d in self.test_data)
+            max_ext = max(d.extension for d in self.test_data)
+            max_stress = max(d.stress for d in self.test_data)
+            max_strain = max(d.strain for d in self.test_data)
+            
+            results = {
+                'Result': ['Max Force (N)', 'Max Extension (mm)', 'Max Stress (MPa)', 'Max Strain (%)'],
+                'Value': [f"{max_force:.2f}", f"{max_ext:.3f}", f"{max_stress:.2f}", f"{max_strain*100:.2f}"]
+            }
+            df_results = pd.DataFrame(results)
+        else:
+            df_results = pd.DataFrame()
+        
         # Export
         try:
             if filename.endswith('.xlsx'):
-                df.to_excel(filename, index=False)
+                with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                    df_meta.to_excel(writer, sheet_name='Test Info', index=False)
+                    df_results.to_excel(writer, sheet_name='Results', index=False)
+                    df.to_excel(writer, sheet_name='Data', index=False)
             else:
+                # For CSV, save data only (or could save multiple files)
                 df.to_csv(filename, index=False)
+                # Also save metadata
+                meta_filename = filename.replace('.csv', '_info.csv')
+                df_meta.to_csv(meta_filename, index=False)
             
             self.status_bar.showMessage(f"Data exported to {filename}", 5000)
             
