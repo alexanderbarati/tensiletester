@@ -67,15 +67,25 @@ class DataExporter:
             os.makedirs(self.output_dir)
     
     def generate_filename(self, config: TestConfiguration, extension: str) -> str:
-        """Generate filename from pattern."""
+        """Generate filename from pattern: date-material_name."""
         timestamp = datetime.now()
-        sample_id = config.metadata.sample_id or "unknown"
         
-        # Clean sample ID for filename
-        sample_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in sample_id)
+        # Get material name, fallback to sample_id, then "unknown"
+        material = config.metadata.material_name or config.metadata.sample_id or "unknown"
         
-        filename = f"{sample_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}.{extension}"
+        # Clean material name for filename
+        material = "".join(c if c.isalnum() or c in "-_" else "_" for c in material)
+        
+        # Format: YYYYMMDD-material_name.ext
+        filename = f"{timestamp.strftime('%Y%m%d')}-{material}.{extension}"
         return os.path.join(self.output_dir, filename)
+    
+    def generate_default_filename(self, config: TestConfiguration, extension: str) -> str:
+        """Generate default filename suggestion."""
+        timestamp = datetime.now()
+        material = config.metadata.material_name or config.metadata.sample_id or "unknown"
+        material = "".join(c if c.isalnum() or c in "-_" else "_" for c in material)
+        return f"{timestamp.strftime('%Y%m%d')}-{material}.{extension}"
     
     # ============== CSV Export ==============
     
@@ -87,9 +97,10 @@ class DataExporter:
                    strains: List[float],
                    config: TestConfiguration,
                    properties: MechanicalProperties,
-                   include_header: bool = True) -> str:
+                   include_header: bool = True,
+                   filepath: str = None) -> str:
         """Export test data to CSV file."""
-        filename = self.generate_filename(config, "csv")
+        filename = filepath if filepath else self.generate_filename(config, "csv")
         
         try:
             with open(filename, 'w', newline='') as f:
@@ -133,12 +144,13 @@ class DataExporter:
                      stresses: List[float],
                      strains: List[float],
                      config: TestConfiguration,
-                     properties: MechanicalProperties) -> str:
+                     properties: MechanicalProperties,
+                     filepath: str = None) -> str:
         """Export test data to Excel file with formatting and charts."""
         if not HAS_OPENPYXL:
             raise ExportError("openpyxl not installed. Install with: pip install openpyxl")
         
-        filename = self.generate_filename(config, "xlsx")
+        filename = filepath if filepath else self.generate_filename(config, "xlsx")
         
         try:
             wb = Workbook()
@@ -296,9 +308,10 @@ class DataExporter:
                     stresses: List[float],
                     strains: List[float],
                     config: TestConfiguration,
-                    properties: MechanicalProperties) -> str:
+                    properties: MechanicalProperties,
+                    filepath: Optional[str] = None) -> str:
         """Export test data to JSON file."""
-        filename = self.generate_filename(config, "json")
+        filename = filepath if filepath else self.generate_filename(config, "json")
         
         try:
             # Build export data structure
@@ -394,12 +407,13 @@ class DataExporter:
                    strains: List[float],
                    config: TestConfiguration,
                    properties: MechanicalProperties,
-                   include_plot: bool = True) -> str:
+                   include_plot: bool = True,
+                   filepath: Optional[str] = None) -> str:
         """Export test report to PDF file."""
         if not HAS_REPORTLAB:
             raise ExportError("reportlab not installed. Install with: pip install reportlab")
         
-        filename = self.generate_filename(config, "pdf")
+        filename = filepath if filepath else self.generate_filename(config, "pdf")
         
         try:
             doc = SimpleDocTemplate(

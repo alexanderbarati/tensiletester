@@ -122,31 +122,92 @@ def set_status(message: str):
         print(f"[Status] {message}")
 
 
+def get_save_path(default_name: str, file_types: list) -> str:
+    """Open file save dialog and return selected path."""
+    import tkinter as tk
+    from tkinter import filedialog
+    
+    # Create hidden root window
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)  # Bring dialog to front
+    
+    # Open save dialog
+    file_path = filedialog.asksaveasfilename(
+        initialfile=default_name,
+        filetypes=file_types,
+        defaultextension=file_types[0][1] if file_types else ""
+    )
+    
+    root.destroy()
+    return file_path
+
+
 def export_csv(sender=None, app_data=None, user_data=None):
-    """Export to CSV."""
+    """Export to CSV with file dialog."""
     print("[DEBUG] export_csv called")
-    export_data("csv")
+    if not state.forces:
+        set_status("No data to export!")
+        return
+    
+    default_name = exporter.generate_default_filename(config, "csv") if exporter else "export.csv"
+    file_path = get_save_path(default_name, [("CSV files", "*.csv"), ("All files", "*.*")])
+    
+    if file_path:
+        export_data("csv", file_path)
+    else:
+        set_status("Export cancelled")
 
 
 def export_excel(sender=None, app_data=None, user_data=None):
-    """Export to Excel."""
+    """Export to Excel with file dialog."""
     print("[DEBUG] export_excel called")
-    export_data("excel")
+    if not state.forces:
+        set_status("No data to export!")
+        return
+    
+    default_name = exporter.generate_default_filename(config, "xlsx") if exporter else "export.xlsx"
+    file_path = get_save_path(default_name, [("Excel files", "*.xlsx"), ("All files", "*.*")])
+    
+    if file_path:
+        export_data("excel", file_path)
+    else:
+        set_status("Export cancelled")
 
 
 def export_pdf(sender=None, app_data=None, user_data=None):
-    """Export to PDF."""
+    """Export to PDF with file dialog."""
     print("[DEBUG] export_pdf called")
-    export_data("pdf")
+    if not state.forces:
+        set_status("No data to export!")
+        return
+    
+    default_name = exporter.generate_default_filename(config, "pdf") if exporter else "export.pdf"
+    file_path = get_save_path(default_name, [("PDF files", "*.pdf"), ("All files", "*.*")])
+    
+    if file_path:
+        export_data("pdf", file_path)
+    else:
+        set_status("Export cancelled")
 
 
 def export_json(sender=None, app_data=None, user_data=None):
-    """Export to JSON."""
+    """Export to JSON with file dialog."""
     print("[DEBUG] export_json called")
-    export_data("json")
+    if not state.forces:
+        set_status("No data to export!")
+        return
+    
+    default_name = exporter.generate_default_filename(config, "json") if exporter else "export.json"
+    file_path = get_save_path(default_name, [("JSON files", "*.json"), ("All files", "*.*")])
+    
+    if file_path:
+        export_data("json", file_path)
+    else:
+        set_status("Export cancelled")
 
 
-def export_data(format_type: str = "csv"):
+def export_data(format_type: str = "csv", file_path: str = None):
     """Export test data to specified format."""
     global exporter
     
@@ -185,22 +246,26 @@ def export_data(format_type: str = "csv"):
         if format_type == "csv":
             filename = exporter.export_csv(
                 list(state.times), list(state.forces), list(state.extensions),
-                list(state.stresses), list(state.strains), config, properties
+                list(state.stresses), list(state.strains), config, properties,
+                filepath=file_path
             )
         elif format_type == "excel":
             filename = exporter.export_excel(
                 list(state.times), list(state.forces), list(state.extensions),
-                list(state.stresses), list(state.strains), config, properties
+                list(state.stresses), list(state.strains), config, properties,
+                filepath=file_path
             )
         elif format_type == "json":
             filename = exporter.export_json(
                 list(state.times), list(state.forces), list(state.extensions),
-                list(state.stresses), list(state.strains), config, properties
+                list(state.stresses), list(state.strains), config, properties,
+                filepath=file_path
             )
         elif format_type == "pdf":
             filename = exporter.export_pdf(
                 list(state.times), list(state.forces), list(state.extensions),
-                list(state.stresses), list(state.strains), config, properties
+                list(state.stresses), list(state.strains), config, properties,
+                filepath=file_path
             )
         else:
             set_status(f"Unknown format: {format_type}")
@@ -529,6 +594,21 @@ def toggle_connection():
     else:
         # Connect
         port = dpg.get_value("port_combo")
+        
+        # Switch to MockSerialHandler if MOCK_PICO is selected
+        if port == "MOCK_PICO":
+            from mock_serial import MockSerialHandler
+            serial_handler = MockSerialHandler()
+            # Setup callbacks for mock handler
+            serial_handler.on_connected = on_connected
+            serial_handler.on_disconnected = on_disconnected
+            serial_handler.on_status = on_status
+            serial_handler.on_data = on_data
+            serial_handler.on_force = on_force
+            serial_handler.on_position = on_position
+            serial_handler.on_response = on_response
+            serial_handler.on_error = on_error
+        
         if serial_handler:
             if serial_handler.connect(port):
                 state.connected = True
@@ -734,8 +814,31 @@ def show_results():
 
 
 def on_results_export(format_type: str, properties, test_data, cfg):
-    """Handle export from results window."""
-    export_data(format_type)
+    """Handle export from results window with file dialog."""
+    if not state.forces:
+        set_status("No data to export!")
+        return
+    
+    # Map format type to file extension and filter
+    format_map = {
+        "csv": ("csv", [("CSV files", "*.csv"), ("All files", "*.*")]),
+        "excel": ("xlsx", [("Excel files", "*.xlsx"), ("All files", "*.*")]),
+        "pdf": ("pdf", [("PDF files", "*.pdf"), ("All files", "*.*")]),
+        "json": ("json", [("JSON files", "*.json"), ("All files", "*.*")]),
+    }
+    
+    if format_type not in format_map:
+        set_status(f"Unknown format: {format_type}")
+        return
+    
+    ext, file_types = format_map[format_type]
+    default_name = exporter.generate_default_filename(config, ext) if exporter else f"export.{ext}"
+    file_path = get_save_path(default_name, file_types)
+    
+    if file_path:
+        export_data(format_type, file_path)
+    else:
+        set_status("Export cancelled")
 
 
 def update_plot():
