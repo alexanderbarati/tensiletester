@@ -1,0 +1,17 @@
+# Dear PyGui GUI Requirements - Professional Version
+# Modern, GPU-accelerated GUI for Tensile Tester
+# Supports ISO 527, ASTM D638 standards
+
+# Core dependencies
+dearpygui>=1.11.0
+numpy>=1.24.0
+pandas>=2.0.0
+pyserial>=3.5
+
+# Excel export support
+openpyxl>=3.1.0
+
+# PDF report generation (optional but recommended)
+reportlab>=4.0.0
+
+# Note: PDF and Excel export will gracefully fall back if not installed
