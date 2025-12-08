@@ -150,6 +150,37 @@ class ResultsAnalyzer:
         
         # Live calculations
         self.live = LiveCalculations()
+    
+    def load_data_batch(self, times: list, forces: list, extensions: list, 
+                        displacements: list = None):
+        """
+        Load data in batch without triggering live calculations (faster).
+        
+        Args:
+            times: List of time values in seconds
+            forces: List of force values in N
+            extensions: List of extension values in mm
+            displacements: List of displacement values (optional, defaults to extensions)
+        """
+        if displacements is None:
+            displacements = extensions
+        
+        n = len(times)
+        for i in range(n):
+            stress = forces[i] / self.cross_section_area
+            strain = extensions[i] / self.gauge_length
+            
+            point = TestDataPoint(times[i], forces[i], extensions[i], 
+                                  displacements[i], stress, strain)
+            self.data.append(point)
+        
+        # Store as lists (faster than appending one by one)
+        self.time_data = list(times)
+        self.force_data = list(forces)
+        self.extension_data = list(extensions)
+        self.displacement_data = list(displacements)
+        self.stress_data = [f / self.cross_section_area for f in forces]
+        self.strain_data = [e / self.gauge_length for e in extensions]
         
     def add_data_point(self, time: float, force: float, extension: float, 
                        displacement: float = None):

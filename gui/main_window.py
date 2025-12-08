@@ -538,22 +538,19 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Results", "No test data available.")
             return
         
-        # Calculate results if not already done
-        if self.test_results is None:
-            self._calculate_final_results()
-        
-        # Create analyzer with all data for the dialog
+        # Create analyzer and load data in batch (fast)
         analyzer = ResultsAnalyzer(
             self.config.specimen.gauge_length,
             self.config.specimen.cross_section_area
         )
-        for d in self.test_data:
-            analyzer.add_data_point(
-                time=d.timestamp / 1000.0,
-                force=d.force,
-                extension=d.extension,
-                displacement=d.extension
-            )
+        
+        # Extract data arrays
+        times = [d.timestamp / 1000.0 for d in self.test_data]
+        forces = [d.force for d in self.test_data]
+        extensions = [d.extension for d in self.test_data]
+        
+        # Load all data at once (skips live calculations)
+        analyzer.load_data_batch(times, forces, extensions)
         
         # Get mechanical properties
         results = analyzer.calculate_results()
@@ -567,26 +564,21 @@ class MainWindow(QMainWindow):
         if not self.test_data:
             return
         
-        # Create a fresh analyzer and add all data points
+        # Create a fresh analyzer
         analyzer = ResultsAnalyzer(
             self.config.specimen.gauge_length,
             self.config.specimen.cross_section_area
         )
         
-        # Add all data points to the analyzer
-        for d in self.test_data:
-            analyzer.add_data_point(
-                time=d.timestamp / 1000.0,  # Convert ms to seconds
-                force=d.force,
-                extension=d.extension,
-                displacement=d.extension  # Using extension as displacement
-            )
+        # Extract data arrays and load in batch (fast)
+        times = [d.timestamp / 1000.0 for d in self.test_data]
+        forces = [d.force for d in self.test_data]
+        extensions = [d.extension for d in self.test_data]
+        
+        analyzer.load_data_batch(times, forces, extensions)
         
         # Calculate mechanical properties
         props = analyzer.calculate_results()
-        
-        # Get data arrays for additional calculations
-        times = np.array([d.timestamp for d in self.test_data])
         
         # Create TestResults object
         self.test_results = TestResults(
@@ -599,7 +591,7 @@ class MainWindow(QMainWindow):
             elongation_at_break=props.elongation_at_break,
             energy_absorbed=props.energy_to_break,
             failure_type=props.failure_type.value if props.failure_type else "Unknown",
-            test_duration=(times[-1] - times[0]) / 1000.0 if len(times) > 1 else 0.0,
+            test_duration=(times[-1] - times[0]) if len(times) > 1 else 0.0,
             data_points=len(self.test_data)
         )
     
