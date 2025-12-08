@@ -29,7 +29,7 @@ from config_model import TestConfiguration, ControlMode, TestResults
 from config_dialog import ConfigDialog
 from results_analyzer import ResultsAnalyzer, MechanicalProperties
 from report_generator import ReportGenerator
-from results_dialog import ResultsDialog
+from results_dialog_fast import show_fast_results
 
 
 class MainWindow(QMainWindow):
@@ -552,12 +552,8 @@ class MainWindow(QMainWindow):
         # Load all data at once (skips live calculations)
         analyzer.load_data_batch(times, forces, extensions)
         
-        # Get mechanical properties
-        results = analyzer.calculate_results()
-        
-        # Show results dialog
-        dialog = ResultsDialog(self.config, results, analyzer, self)
-        dialog.exec_()
+        # Show fast results dialog
+        show_fast_results(self.config, analyzer, self)
     
     def _calculate_final_results(self):
         """Calculate final test results after test completion."""

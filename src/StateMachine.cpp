@@ -1,6 +1,7 @@
 #include "StateMachine.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include <cmath>
 
 StateMachine::StateMachine(LoadCell& loadCell, Stepper& stepper, Protocol& protocol)
     : _loadCell(loadCell)
@@ -566,11 +567,38 @@ void StateMachine::updateRunning() {
         return;
     }
     
-    // Record data point
+    // === HYBRID SAMPLING: Time-based + Event-based ===
     uint32_t now = to_ms_since_boot(get_absolute_time());
-    if ((now - _lastSampleTime) >= _params.sampleRate) {
+    uint32_t timeSinceLast = now - _lastSampleTime;
+    
+    // Event detection
+    static float lastSampledForce = 0;
+    static float lastSlope = 0;
+    static float maxForceSeen = 0;
+    
+    // Calculate force rate (slope)
+    float dt = timeSinceLast / 1000.0f;
+    float currentSlope = (dt > 0) ? (force - lastSampledForce) / dt : 0;
+    
+    // Event flags
+    bool timeBasedSample = (timeSinceLast >= _params.sampleRate);
+    bool forceChangeEvent = (fabsf(force - lastSampledForce) > 5.0f);  // 5N threshold
+    bool slopeChangeEvent = (fabsf(lastSlope) > 1.0f && 
+                            fabsf(currentSlope - lastSlope) / fabsf(lastSlope) > 0.3f);
+    bool peakEvent = (force > maxForceSeen && force > maxForceSeen * 0.99f);
+    bool forceDropEvent = (maxForceSeen > 50.0f && force < maxForceSeen * 0.9f);
+    
+    bool eventBasedSample = (timeSinceLast >= 20) &&  // Min 20ms between samples
+                           (forceChangeEvent || slopeChangeEvent || peakEvent || forceDropEvent);
+    
+    if (timeBasedSample || eventBasedSample) {
         recordDataPoint();
         _lastSampleTime = now;
+        lastSampledForce = force;
+        lastSlope = currentSlope;
+        if (force > maxForceSeen) {
+            maxForceSeen = force;
+        }
     }
 }
 

@@ -245,15 +245,28 @@ class MockSerial:
         self._queue_response("OK Homing complete")
     
     def _simulation_loop(self):
-        """Background simulation loop."""
+        """
+        Background simulation loop with hybrid sampling:
+        - Time-based: Regular samples at fixed interval (10 Hz base rate)
+        - Event-based: Extra samples on significant changes
+        """
         last_data_time = 0
+        last_force = 0
+        last_slope = 0
+        max_force_seen = 0
+        
+        # Sampling configuration
+        BASE_SAMPLE_INTERVAL = 0.1    # 100ms = 10 Hz base rate
+        MIN_SAMPLE_INTERVAL = 0.02    # 50 Hz max rate for events
+        FORCE_CHANGE_THRESHOLD = 5.0  # N - trigger event sample if force changes this much
+        SLOPE_CHANGE_THRESHOLD = 0.3  # Relative slope change to detect yield/transitions
         
         while self._sim_running:
-            time.sleep(0.05)  # 20 Hz simulation
+            time.sleep(0.02)  # 50 Hz simulation loop (faster for event detection)
             
             if self._is_running and not self._is_paused:
                 # Update position based on speed
-                dt = 0.05
+                dt = 0.02
                 self._position += self._speed * dt
                 
                 # Simulate material response (stress-strain curve with noise)
@@ -296,11 +309,32 @@ class MockSerial:
                     self._is_running = False
                     self._queue_response("OK Test stopped - max extension reached")
                 
-                # Send data point every 100ms
+                # === HYBRID SAMPLING LOGIC ===
                 now = time.time()
-                if now - last_data_time >= 0.1:
+                time_since_last = now - last_data_time
+                
+                # Calculate current slope (force rate)
+                current_slope = (self._force - last_force) / dt if dt > 0 else 0
+                
+                # Event detection flags
+                force_change_event = abs(self._force - last_force) > FORCE_CHANGE_THRESHOLD
+                slope_change_event = (abs(last_slope) > 1 and 
+                                     abs(current_slope - last_slope) / abs(last_slope) > SLOPE_CHANGE_THRESHOLD)
+                peak_event = (self._force > max_force_seen and 
+                             last_force > max_force_seen * 0.99)  # Near peak
+                force_drop_event = (max_force_seen > 50 and 
+                                   self._force < max_force_seen * 0.9)  # Significant drop (failure)
+                
+                # Determine if we should sample
+                time_based_sample = time_since_last >= BASE_SAMPLE_INTERVAL
+                event_based_sample = (time_since_last >= MIN_SAMPLE_INTERVAL and 
+                                     (force_change_event or slope_change_event or 
+                                      peak_event or force_drop_event))
+                
+                if time_based_sample or event_based_sample:
                     last_data_time = now
                     timestamp = (now - self._test_start_time) * 1000
+                    
                     # Calculate stress/strain (assuming 10mm^2 cross-section, 50mm gauge length)
                     stress = self._force / 10.0  # MPa
                     strain = self._position / 50.0  # ratio
@@ -308,6 +342,12 @@ class MockSerial:
                     self._queue_response(
                         f"DATA {timestamp:.1f},{self._force:.2f},{self._position:.3f},{stress:.3f},{strain:.5f}"
                     )
+                    
+                    # Update tracking variables
+                    last_force = self._force
+                    last_slope = current_slope
+                    if self._force > max_force_seen:
+                        max_force_seen = self._force
             
             # Add some noise to force reading even when idle
             elif self._state in ["IDLE", "READY"]:

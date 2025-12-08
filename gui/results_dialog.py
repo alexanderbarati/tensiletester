@@ -448,10 +448,23 @@ class ResultsDialog(QDialog):
         self.time_plot.plot(time, force, pen=pg.mkPen('#4fc3f7', width=1.5), name='Force (N)')
         self.time_plot.plot(time, stress * 10, pen=pg.mkPen('#f48fb1', width=1.5), name='Stress x10 (MPa)')
         
-        # Data table
+        # Data table - limit to first/last 500 rows for performance
         data = self.analyzer.data
-        self.data_table.setRowCount(len(data))
-        for i, d in enumerate(data):
+        total_points = len(data)
+        
+        # Sample data if too many points
+        if total_points > 1000:
+            # Show first 500 and last 500
+            display_data = data[:500] + data[-500:]
+            show_gap = True
+        else:
+            display_data = data
+            show_gap = False
+        
+        self.data_table.setUpdatesEnabled(False)  # Disable updates for speed
+        self.data_table.setRowCount(len(display_data) + (1 if show_gap else 0))
+        
+        for i, d in enumerate(display_data[:500] if show_gap else display_data):
             self.data_table.setItem(i, 0, QTableWidgetItem(f"{d.time:.3f}"))
             self.data_table.setItem(i, 1, QTableWidgetItem(f"{d.force:.2f}"))
             self.data_table.setItem(i, 2, QTableWidgetItem(f"{d.extension:.4f}"))
@@ -460,7 +473,28 @@ class ResultsDialog(QDialog):
             self.data_table.setItem(i, 5, QTableWidgetItem(f"{d.strain:.6f}"))
             self.data_table.setItem(i, 6, QTableWidgetItem(f"{d.strain * 100:.4f}"))
         
-        self.data_points_label.setText(f"Data Points: {len(data)}")
+        if show_gap:
+            # Add gap indicator row
+            gap_row = 500
+            gap_text = f"... {total_points - 1000} rows hidden ..."
+            self.data_table.setItem(gap_row, 0, QTableWidgetItem(gap_text))
+            for col in range(1, 7):
+                self.data_table.setItem(gap_row, col, QTableWidgetItem(""))
+            
+            # Add last 500 rows
+            for i, d in enumerate(display_data[500:]):
+                row = 501 + i
+                self.data_table.setItem(row, 0, QTableWidgetItem(f"{d.time:.3f}"))
+                self.data_table.setItem(row, 1, QTableWidgetItem(f"{d.force:.2f}"))
+                self.data_table.setItem(row, 2, QTableWidgetItem(f"{d.extension:.4f}"))
+                self.data_table.setItem(row, 3, QTableWidgetItem(f"{d.displacement:.4f}"))
+                self.data_table.setItem(row, 4, QTableWidgetItem(f"{d.stress:.3f}"))
+                self.data_table.setItem(row, 5, QTableWidgetItem(f"{d.strain:.6f}"))
+                self.data_table.setItem(row, 6, QTableWidgetItem(f"{d.strain * 100:.4f}"))
+        
+        self.data_table.setUpdatesEnabled(True)  # Re-enable updates
+        self.data_points_label.setText(f"Data Points: {total_points}" + 
+                                        (f" (showing {len(display_data)})" if show_gap else ""))
     
     def _export(self, format_type: str):
         """Export results in specified format."""
