@@ -112,6 +112,102 @@ config_dialog: Optional[ConfigDialog] = None
 results_window: Optional[ResultsWindow] = None
 exporter: Optional[DataExporter] = None
 
+# ============== Export Functions ==============
+
+def set_status(message: str):
+    """Update status bar."""
+    try:
+        dpg.set_value("status_text", message)
+    except Exception:
+        print(f"[Status] {message}")
+
+
+def export_csv(sender=None, app_data=None, user_data=None):
+    """Export to CSV."""
+    print("[DEBUG] export_csv called")
+    export_data("csv")
+
+
+def export_excel(sender=None, app_data=None, user_data=None):
+    """Export to Excel."""
+    print("[DEBUG] export_excel called")
+    export_data("excel")
+
+
+def export_pdf(sender=None, app_data=None, user_data=None):
+    """Export to PDF."""
+    print("[DEBUG] export_pdf called")
+    export_data("pdf")
+
+
+def export_json(sender=None, app_data=None, user_data=None):
+    """Export to JSON."""
+    print("[DEBUG] export_json called")
+    export_data("json")
+
+
+def export_data(format_type: str = "csv"):
+    """Export test data to specified format."""
+    global exporter
+    
+    print(f"[DEBUG] export_data called with format: {format_type}")
+    
+    if not state.forces:
+        set_status("No data to export!")
+        print("[DEBUG] No data to export")
+        return
+    
+    if exporter is None:
+        exporter = DataExporter()
+    
+    # Calculate properties for export
+    analyzer = ResultsAnalyzer()
+    test_data = TestData(
+        times=list(state.times),
+        forces=list(state.forces),
+        extensions=list(state.extensions),
+        stresses=list(state.stresses),
+        strains=list(state.strains),
+        true_stresses=list(state.true_stresses),
+        true_strains=list(state.true_strains)
+    )
+    properties = analyzer.analyze(test_data, config)
+    
+    try:
+        if format_type == "csv":
+            filename = exporter.export_csv(
+                list(state.times), list(state.forces), list(state.extensions),
+                list(state.stresses), list(state.strains), config, properties
+            )
+        elif format_type == "excel":
+            filename = exporter.export_excel(
+                list(state.times), list(state.forces), list(state.extensions),
+                list(state.stresses), list(state.strains), config, properties
+            )
+        elif format_type == "json":
+            filename = exporter.export_json(
+                list(state.times), list(state.forces), list(state.extensions),
+                list(state.stresses), list(state.strains), config, properties
+            )
+        elif format_type == "pdf":
+            filename = exporter.export_pdf(
+                list(state.times), list(state.forces), list(state.extensions),
+                list(state.stresses), list(state.strains), config, properties
+            )
+        else:
+            set_status(f"Unknown format: {format_type}")
+            return
+        
+        set_status(f"Exported: {filename}")
+        print(f"[DEBUG] Export successful: {filename}")
+    except Exception as e:
+        set_status(f"Export failed: {e}")
+        print(f"[DEBUG] Export failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+
 
 def setup_theme():
     """Create custom dark theme."""
@@ -296,10 +392,10 @@ def create_control_panel():
         dpg.add_separator()
         dpg.add_button(label="📈 Analyze Results", width=-1, height=35, callback=show_results)
         with dpg.group(horizontal=True):
-            dpg.add_button(label="� CSV", width=65, height=30, callback=lambda: export_data("csv"))
-            dpg.add_button(label="📊 Excel", width=65, height=30, callback=lambda: export_data("excel"))
-            dpg.add_button(label="� PDF", width=65, height=30, callback=lambda: export_data("pdf"))
-            dpg.add_button(label="{ } JSON", width=65, height=30, callback=lambda: export_data("json"))
+            dpg.add_button(label="� CSV", width=65, height=30, callback=export_csv)
+            dpg.add_button(label="📊 Excel", width=65, height=30, callback=export_excel)
+            dpg.add_button(label="� PDF", width=65, height=30, callback=export_pdf)
+            dpg.add_button(label="{ } JSON", width=65, height=30, callback=export_json)
 
 
 def create_plot_panel():
@@ -524,6 +620,11 @@ def start_test():
         set_status("Not connected!")
         return
     
+    # Get speed from UI and set it
+    speed = dpg.get_value("speed_input")
+    if serial_handler:
+        serial_handler.set_speed(speed)
+    
     # Clear data
     state.times.clear()
     state.forces.clear()
@@ -547,7 +648,7 @@ def start_test():
     if serial_handler:
         serial_handler.start_test()
     
-    set_status("Test started")
+    set_status(f"Test started at {speed} mm/s")
 
 
 def stop_test():
@@ -594,58 +695,6 @@ def emergency_stop():
     set_status("EMERGENCY STOP!")
 
 
-def export_data(format_type: str = "csv"):
-    """Export test data to specified format."""
-    global exporter
-    
-    if not state.forces:
-        set_status("No data to export!")
-        return
-    
-    if exporter is None:
-        exporter = DataExporter()
-    
-    # Calculate properties for export
-    analyzer = ResultsAnalyzer()
-    test_data = TestData(
-        times=state.times,
-        forces=state.forces,
-        extensions=state.extensions,
-        stresses=state.stresses,
-        strains=state.strains,
-        true_stresses=state.true_stresses,
-        true_strains=state.true_strains
-    )
-    properties = analyzer.analyze(test_data, config)
-    
-    try:
-        if format_type == "csv":
-            filename = exporter.export_csv(
-                state.times, state.forces, state.extensions,
-                state.stresses, state.strains, config, properties
-            )
-        elif format_type == "excel":
-            filename = exporter.export_excel(
-                state.times, state.forces, state.extensions,
-                state.stresses, state.strains, config, properties
-            )
-        elif format_type == "json":
-            filename = exporter.export_json(
-                state.times, state.forces, state.extensions,
-                state.stresses, state.strains, config, properties
-            )
-        elif format_type == "pdf":
-            filename = exporter.export_pdf(
-                state.times, state.forces, state.extensions,
-                state.stresses, state.strains, config, properties
-            )
-        else:
-            set_status(f"Unknown format: {format_type}")
-            return
-        
-        set_status(f"Exported to {filename}")
-    except Exception as e:
-        set_status(f"Export failed: {e}")
 
 
 def show_results():
@@ -677,11 +726,6 @@ def show_results():
 def on_results_export(format_type: str, properties, test_data, cfg):
     """Handle export from results window."""
     export_data(format_type)
-
-
-def set_status(message: str):
-    """Update status bar."""
-    dpg.set_value("status_text", message)
 
 
 def update_plot():
