@@ -283,8 +283,18 @@ class ResultsWindow:
         self.test_data = data
         self.config = config
         
+        # Debug
+        print(f"[ResultsWindow] Data points: {len(data.forces) if data.forces else 0}")
+        print(f"[ResultsWindow] Forces: {data.forces[:5] if data.forces else 'empty'}...")
+        print(f"[ResultsWindow] Stresses: {data.stresses[:5] if data.stresses else 'empty'}...")
+        
         # Analyze data
         self.properties = self.analyzer.analyze(data, config)
+        
+        # Debug properties
+        print(f"[ResultsWindow] UTS: {self.properties.ultimate_tensile_strength}")
+        print(f"[ResultsWindow] Modulus: {self.properties.youngs_modulus}")
+        print(f"[ResultsWindow] Max Force: {self.properties.max_force}")
         
         # Classify failure
         failure_type = ResultsAnalyzer.classify_failure(data.forces, data.stresses)

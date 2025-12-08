@@ -173,6 +173,14 @@ def export_data(format_type: str = "csv"):
     )
     properties = analyzer.analyze(test_data, config)
     
+    # Debug output
+    print(f"[DEBUG] Data points: {len(state.forces)}")
+    print(f"[DEBUG] Max force: {max(state.forces) if state.forces else 0}")
+    print(f"[DEBUG] Max stress: {max(state.stresses) if state.stresses else 0}")
+    print(f"[DEBUG] Properties UTS: {properties.ultimate_tensile_strength}")
+    print(f"[DEBUG] Properties Yield: {properties.yield_strength_offset}")
+    print(f"[DEBUG] Properties Modulus: {properties.youngs_modulus}")
+    
     try:
         if format_type == "csv":
             filename = exporter.export_csv(
@@ -709,16 +717,18 @@ def show_results():
         results_window = ResultsWindow()
         results_window.on_export = on_results_export
     
-    # Create test data container
+    # Create test data container with COPIES of the data
     test_data = TestData(
-        times=state.times,
-        forces=state.forces,
-        extensions=state.extensions,
-        stresses=state.stresses,
-        strains=state.strains,
-        true_stresses=state.true_stresses,
-        true_strains=state.true_strains
+        times=list(state.times),
+        forces=list(state.forces),
+        extensions=list(state.extensions),
+        stresses=list(state.stresses),
+        strains=list(state.strains),
+        true_stresses=list(state.true_stresses),
+        true_strains=list(state.true_strains)
     )
+    
+    print(f"[show_results] Passing {len(test_data.forces)} data points to ResultsWindow")
     
     results_window.show(test_data, config)
 
