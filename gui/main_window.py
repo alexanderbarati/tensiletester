@@ -4,6 +4,7 @@ Main Window for Tensile Tester GUI
 
 Optimized for Waveshare 7" display (1024x600).
 Enhanced with real-time calculations and multiple plot views.
+Raspberry Pi performance optimizations.
 """
 
 import os
@@ -30,6 +31,13 @@ from config_dialog import ConfigDialog
 from results_analyzer import ResultsAnalyzer, MechanicalProperties
 from report_generator import ReportGenerator
 from results_dialog_fast import show_fast_results
+
+# Import Pi configuration
+from pi_config import (
+    STATUS_POLL_RATE_MS, PLOT_UPDATE_RATE_MS, PLOT_MAX_POINTS,
+    PLOT_DOWNSAMPLE, USE_OPENGL, ANTIALIAS, DATA_BUFFER_SIZE,
+    IS_RASPBERRY_PI, COLORS
+)
 
 
 class MainWindow(QMainWindow):
@@ -530,6 +538,12 @@ class MainWindow(QMainWindow):
         else:
             x, y = [], []
         
+        # Downsample for live display on Pi (keep full data for analysis)
+        if PLOT_DOWNSAMPLE and len(x) > PLOT_MAX_POINTS:
+            step = len(x) // PLOT_MAX_POINTS
+            x = x[::step]
+            y = y[::step]
+        
         self.plot_curve.setData(x, y)
     
     def _show_results_dialog(self):
@@ -663,8 +677,8 @@ class MainWindow(QMainWindow):
         self.state_label.setText("CONNECTED")
         self.state_label.setStyleSheet("color: #4caf50;")
         
-        # Start status polling
-        self.status_timer.start(200)
+        # Start status polling (Pi-optimized interval)
+        self.status_timer.start(STATUS_POLL_RATE_MS)
         
         # Request initial status
         self.serial.identify()
@@ -715,8 +729,18 @@ class MainWindow(QMainWindow):
         """Handle test data point."""
         self.test_data.append(data)
         
-        # Update plot using current plot type
-        self._refresh_plot()
+        # Limit buffer size for memory efficiency (Pi optimized)
+        if len(self.test_data) > DATA_BUFFER_SIZE:
+            # Keep every other point in older data
+            self.test_data = self.test_data[:100] + self.test_data[100::2]
+        
+        # Throttle plot updates on Pi (only update every N data points)
+        if IS_RASPBERRY_PI and len(self.test_data) % 3 != 0:
+            # Skip plot update for 2 out of 3 data points on Pi
+            pass
+        else:
+            # Update plot using current plot type
+            self._refresh_plot()
         
         # Calculate live values
         current_stress = data.stress

@@ -3,6 +3,7 @@
 Serial Communication Handler
 
 Manages serial communication with the Raspberry Pi Pico.
+Optimized for Raspberry Pi performance.
 """
 
 import serial
@@ -13,6 +14,14 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Callable, List
 from PyQt5.QtCore import QObject, pyqtSignal
+
+# Import Pi configuration
+try:
+    from pi_config import IS_RASPBERRY_PI, SERIAL_TIMEOUT, SERIAL_BUFFER_SIZE
+except ImportError:
+    IS_RASPBERRY_PI = False
+    SERIAL_TIMEOUT = 0.1
+    SERIAL_BUFFER_SIZE = 4096
 
 
 @dataclass
@@ -101,7 +110,7 @@ class SerialHandler(QObject):
             self.serial = serial.Serial(
                 port=port,
                 baudrate=baudrate,
-                timeout=0.1,
+                timeout=SERIAL_TIMEOUT,  # Pi-optimized
                 write_timeout=1.0
             )
             time.sleep(0.5)  # Wait for connection
@@ -228,13 +237,24 @@ class SerialHandler(QObject):
         return self.send_command("RESET")
     
     def _read_loop(self):
-        """Background thread for reading serial data."""
+        """Background thread for reading serial data (optimized for Pi)."""
+        buffer = ""
         while self._running and self.serial:
             try:
+                # Read available data in chunks (more efficient on Pi)
                 if self.serial.in_waiting:
-                    line = self.serial.readline().decode('utf-8').strip()
-                    if line:
-                        self._parse_response(line)
+                    chunk = self.serial.read(min(self.serial.in_waiting, SERIAL_BUFFER_SIZE))
+                    buffer += chunk.decode('utf-8', errors='ignore')
+                    
+                    # Process complete lines
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if line:
+                            self._parse_response(line)
+                else:
+                    # Small sleep when no data (reduces CPU usage on Pi)
+                    time.sleep(0.01 if IS_RASPBERRY_PI else 0.001)
             except Exception as e:
                 if self._running:
                     self.error_occurred.emit(f"Read error: {str(e)}")
