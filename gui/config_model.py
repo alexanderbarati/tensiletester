@@ -364,6 +364,29 @@ class TestConfiguration:
         return cls.from_dict(data)
 
 
+@dataclass
+class TestResults:
+    """Results from a completed tensile test."""
+    # Primary strength values
+    max_force: float = 0.0  # N
+    max_stress: float = 0.0  # MPa (UTS)
+    max_strain: float = 0.0  # % at break
+    max_extension: float = 0.0  # mm
+    
+    # Calculated properties
+    yield_strength: float = 0.0  # MPa (Rp0.2)
+    youngs_modulus: float = 0.0  # MPa
+    elongation_at_break: float = 0.0  # %
+    energy_absorbed: float = 0.0  # J (toughness)
+    
+    # Failure information
+    failure_type: str = "Unknown"
+    
+    # Test metadata
+    test_duration: float = 0.0  # seconds
+    data_points: int = 0
+
+
 # ============================================================================
 # Preset Configurations
 # ============================================================================

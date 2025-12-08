@@ -3,6 +3,7 @@
 Main Window for Tensile Tester GUI
 
 Optimized for Waveshare 7" display (1024x600).
+Enhanced with real-time calculations and multiple plot views.
 """
 
 import os
@@ -24,8 +25,11 @@ import numpy as np
 import pandas as pd
 
 from serial_handler import SerialHandler, DataPoint, Status
-from config_model import TestConfiguration, ControlMode
+from config_model import TestConfiguration, ControlMode, TestResults
 from config_dialog import ConfigDialog
+from results_analyzer import ResultsAnalyzer, MechanicalProperties
+from report_generator import ReportGenerator
+from results_dialog import ResultsDialog
 
 
 class MainWindow(QMainWindow):
@@ -44,10 +48,22 @@ class MainWindow(QMainWindow):
         # Test configuration
         self.config = TestConfiguration()
         
+        # Results analyzer
+        self.analyzer = ResultsAnalyzer(
+            self.config.specimen.gauge_length,
+            self.config.specimen.cross_section_area
+        )
+        
         # Test data storage
         self.test_data: List[DataPoint] = []
         self.is_test_running = False
         self.current_state = "DISCONNECTED"
+        self.test_start_time = 0
+        
+        # Live calculation tracking
+        self.cumulative_energy = 0.0
+        self.last_data_time = 0
+        self.test_results = None
         
         # Create UI
         self._create_ui()
@@ -259,10 +275,42 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(left_panel)
         
-        # Right panel - Graph
+        # Right panel - Graph and live data
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(5)
+        
+        # Plot controls row
+        plot_controls = QWidget()
+        plot_controls_layout = QHBoxLayout(plot_controls)
+        plot_controls_layout.setContentsMargins(0, 0, 0, 0)
+        
+        plot_controls_layout.addWidget(QLabel("Plot Type:"))
+        self.plot_type_combo = QComboBox()
+        self.plot_type_combo.addItems([
+            "Force vs Extension",
+            "Stress vs Strain", 
+            "Force vs Time",
+            "Stress vs Time",
+            "Extension vs Time"
+        ])
+        self.plot_type_combo.currentIndexChanged.connect(self._update_plot_type)
+        plot_controls_layout.addWidget(self.plot_type_combo)
+        
+        plot_controls_layout.addStretch()
+        
+        # Test stage indicator
+        self.test_stage_label = QLabel("Stage: -")
+        self.test_stage_label.setStyleSheet("color: #888; font-weight: bold;")
+        plot_controls_layout.addWidget(self.test_stage_label)
+        
+        # Test time display
+        self.test_time_label = QLabel("Time: 00:00.0")
+        self.test_time_label.setStyleSheet("color: #4fc3f7; font-weight: bold;")
+        plot_controls_layout.addWidget(self.test_time_label)
+        
+        right_layout.addWidget(plot_controls)
         
         # Create plot widget
         pg.setConfigOptions(antialias=True)
@@ -278,24 +326,70 @@ class MainWindow(QMainWindow):
             pen=pg.mkPen(color='#4fc3f7', width=2)
         )
         
+        # Add markers for key points
+        self.max_force_marker = self.plot_widget.plot(
+            [], [], pen=None, symbol='o', symbolBrush='#f44336', symbolSize=10
+        )
+        self.yield_point_marker = self.plot_widget.plot(
+            [], [], pen=None, symbol='s', symbolBrush='#ff9800', symbolSize=10
+        )
+        
         right_layout.addWidget(self.plot_widget)
         
-        # Results display
+        # Live calculated values - primary row
+        live_values_frame = QFrame()
+        live_values_frame.setFrameShape(QFrame.StyledPanel)
+        live_values_frame.setMaximumHeight(70)
+        live_values_layout = QHBoxLayout(live_values_frame)
+        live_values_layout.setSpacing(15)
+        
+        self.live_stress = self._create_result_label("Stress", "0.00", "MPa")
+        live_values_layout.addWidget(self.live_stress)
+        
+        self.live_strain = self._create_result_label("Strain", "0.000", "%")
+        live_values_layout.addWidget(self.live_strain)
+        
+        self.live_rate = self._create_result_label("Rate", "0.00", "mm/s")
+        live_values_layout.addWidget(self.live_rate)
+        
+        self.live_energy = self._create_result_label("Energy", "0.000", "J")
+        live_values_layout.addWidget(self.live_energy)
+        
+        right_layout.addWidget(live_values_frame)
+        
+        # Results display - secondary row
         results_frame = QFrame()
         results_frame.setFrameShape(QFrame.StyledPanel)
-        results_frame.setMaximumHeight(80)
+        results_frame.setMaximumHeight(70)
         results_layout = QHBoxLayout(results_frame)
+        results_layout.setSpacing(15)
         
         self.max_force_result = self._create_result_label("Max Force", "0.00", "N")
         results_layout.addWidget(self.max_force_result)
         
-        self.max_ext_result = self._create_result_label("Max Extension", "0.000", "mm")
+        self.max_stress_result = self._create_result_label("UTS", "0.00", "MPa")
+        results_layout.addWidget(self.max_stress_result)
+        
+        self.max_ext_result = self._create_result_label("Max Ext.", "0.000", "mm")
         results_layout.addWidget(self.max_ext_result)
         
-        self.data_points_result = self._create_result_label("Data Points", "0", "")
+        self.data_points_result = self._create_result_label("Points", "0", "")
         results_layout.addWidget(self.data_points_result)
         
         right_layout.addWidget(results_frame)
+        
+        # Results button row
+        results_btn_row = QWidget()
+        results_btn_layout = QHBoxLayout(results_btn_row)
+        results_btn_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.view_results_btn = QPushButton("📊 View Full Results && Analysis")
+        self.view_results_btn.setMinimumHeight(35)
+        self.view_results_btn.setEnabled(False)
+        self.view_results_btn.clicked.connect(self._show_results_dialog)
+        results_btn_layout.addWidget(self.view_results_btn)
+        
+        right_layout.addWidget(results_btn_row)
         
         main_layout.addWidget(right_panel, stretch=1)
         
@@ -384,6 +478,130 @@ class MainWindow(QMainWindow):
         # Send limits
         self.serial.set_max_force(c.termination.max_force)
         self.serial.set_max_extension(c.termination.max_extension)
+        
+        # Update analyzer with new config
+        self.analyzer = ResultsAnalyzer(
+            c.specimen.gauge_length,
+            c.specimen.cross_section_area
+        )
+    
+    def _update_plot_type(self, index: int):
+        """Update plot type and refresh data display."""
+        plot_types = [
+            ("Force vs Extension", "Force", "N", "Extension", "mm"),
+            ("Stress vs Strain", "Stress", "MPa", "Strain", "%"),
+            ("Force vs Time", "Force", "N", "Time", "s"),
+            ("Stress vs Time", "Stress", "MPa", "Time", "s"),
+            ("Extension vs Time", "Extension", "mm", "Time", "s"),
+        ]
+        
+        title, y_label, y_unit, x_label, x_unit = plot_types[index]
+        
+        self.plot_widget.setTitle(title, color='w', size='14pt')
+        self.plot_widget.setLabel('left', y_label, units=y_unit, color='w')
+        self.plot_widget.setLabel('bottom', x_label, units=x_unit, color='w')
+        
+        # Refresh plot with current data
+        self._refresh_plot()
+    
+    def _refresh_plot(self):
+        """Refresh the plot with current data based on selected plot type."""
+        if not self.test_data:
+            self.plot_curve.setData([], [])
+            return
+        
+        plot_type = self.plot_type_combo.currentIndex()
+        
+        if plot_type == 0:  # Force vs Extension
+            x = [d.extension for d in self.test_data]
+            y = [d.force for d in self.test_data]
+        elif plot_type == 1:  # Stress vs Strain
+            x = [d.strain * 100 for d in self.test_data]  # Convert to %
+            y = [d.stress for d in self.test_data]
+        elif plot_type == 2:  # Force vs Time
+            x = [d.timestamp / 1000.0 for d in self.test_data]  # Convert ms to s
+            y = [d.force for d in self.test_data]
+        elif plot_type == 3:  # Stress vs Time
+            x = [d.timestamp / 1000.0 for d in self.test_data]
+            y = [d.stress for d in self.test_data]
+        elif plot_type == 4:  # Extension vs Time
+            x = [d.timestamp / 1000.0 for d in self.test_data]
+            y = [d.extension for d in self.test_data]
+        else:
+            x, y = [], []
+        
+        self.plot_curve.setData(x, y)
+    
+    def _show_results_dialog(self):
+        """Show the full results analysis dialog."""
+        if not self.test_data:
+            QMessageBox.information(self, "Results", "No test data available.")
+            return
+        
+        # Calculate results if not already done
+        if self.test_results is None:
+            self._calculate_final_results()
+        
+        # Create analyzer with all data for the dialog
+        analyzer = ResultsAnalyzer(
+            self.config.specimen.gauge_length,
+            self.config.specimen.cross_section_area
+        )
+        for d in self.test_data:
+            analyzer.add_data_point(
+                time=d.timestamp / 1000.0,
+                force=d.force,
+                extension=d.extension,
+                displacement=d.extension
+            )
+        
+        # Get mechanical properties
+        results = analyzer.calculate_results()
+        
+        # Show results dialog
+        dialog = ResultsDialog(self.config, results, analyzer, self)
+        dialog.exec_()
+    
+    def _calculate_final_results(self):
+        """Calculate final test results after test completion."""
+        if not self.test_data:
+            return
+        
+        # Create a fresh analyzer and add all data points
+        analyzer = ResultsAnalyzer(
+            self.config.specimen.gauge_length,
+            self.config.specimen.cross_section_area
+        )
+        
+        # Add all data points to the analyzer
+        for d in self.test_data:
+            analyzer.add_data_point(
+                time=d.timestamp / 1000.0,  # Convert ms to seconds
+                force=d.force,
+                extension=d.extension,
+                displacement=d.extension  # Using extension as displacement
+            )
+        
+        # Calculate mechanical properties
+        props = analyzer.calculate_results()
+        
+        # Get data arrays for additional calculations
+        times = np.array([d.timestamp for d in self.test_data])
+        
+        # Create TestResults object
+        self.test_results = TestResults(
+            max_force=props.max_force,
+            max_stress=props.ultimate_tensile_strength,
+            max_strain=props.elongation_at_break,
+            max_extension=props.extension_at_break,
+            yield_strength=props.yield_strength_offset,
+            youngs_modulus=props.youngs_modulus,
+            elongation_at_break=props.elongation_at_break,
+            energy_absorbed=props.energy_to_break,
+            failure_type=props.failure_type.value if props.failure_type else "Unknown",
+            test_duration=(times[-1] - times[0]) / 1000.0 if len(times) > 1 else 0.0,
+            data_points=len(self.test_data)
+        )
     
     def _refresh_ports(self):
         """Refresh available serial ports."""
@@ -446,6 +664,9 @@ class MainWindow(QMainWindow):
         
         # Export enabled when we have data
         self.export_btn.setEnabled(len(self.test_data) > 0)
+        
+        # View results enabled when we have data and test is done
+        self.view_results_btn.setEnabled(len(self.test_data) > 0 and not testing)
     
     @pyqtSlot()
     def _on_connected(self):
@@ -506,17 +727,63 @@ class MainWindow(QMainWindow):
         """Handle test data point."""
         self.test_data.append(data)
         
-        # Update plot
-        if len(self.test_data) > 1:
-            extensions = [d.extension for d in self.test_data]
-            forces = [d.force for d in self.test_data]
-            self.plot_curve.setData(extensions, forces)
+        # Update plot using current plot type
+        self._refresh_plot()
         
-        # Update results
+        # Calculate live values
+        current_stress = data.stress
+        current_strain = data.strain * 100  # Convert to %
+        
+        # Calculate rate (mm/s) from last two points
+        rate = 0.0
+        if len(self.test_data) >= 2:
+            prev = self.test_data[-2]
+            dt = (data.timestamp - prev.timestamp) / 1000.0  # Convert to seconds
+            if dt > 0:
+                rate = abs(data.extension - prev.extension) / dt
+        
+        # Calculate cumulative energy (trapezoidal integration)
+        if len(self.test_data) >= 2:
+            prev = self.test_data[-2]
+            avg_force = (data.force + prev.force) / 2
+            d_ext = abs(data.extension - prev.extension) / 1000.0  # Convert to meters
+            self.cumulative_energy += avg_force * d_ext
+        
+        # Update live displays
+        self.live_stress.value_label.setText(f"{current_stress:.2f}")
+        self.live_strain.value_label.setText(f"{current_strain:.3f}")
+        self.live_rate.value_label.setText(f"{rate:.2f}")
+        self.live_energy.value_label.setText(f"{self.cumulative_energy:.3f}")
+        
+        # Update test time
+        if len(self.test_data) > 0:
+            elapsed_s = data.timestamp / 1000.0
+            mins = int(elapsed_s // 60)
+            secs = elapsed_s % 60
+            self.test_time_label.setText(f"Time: {mins:02d}:{secs:04.1f}")
+        
+        # Determine test stage
+        if len(self.test_data) < 10:
+            stage = "Pre-load"
+        else:
+            forces = [d.force for d in self.test_data]
+            max_force = max(forces)
+            if data.force >= max_force * 0.95:
+                stage = "Peak Load"
+            elif data.force < max_force * 0.5 and len(self.test_data) > 20:
+                stage = "Post-Failure"
+            else:
+                stage = "Loading"
+        
+        self.test_stage_label.setText(f"Stage: {stage}")
+        
+        # Update results summary
         max_force = max(d.force for d in self.test_data)
+        max_stress = max(d.stress for d in self.test_data)
         max_ext = max(d.extension for d in self.test_data)
         
         self.max_force_result.value_label.setText(f"{max_force:.2f}")
+        self.max_stress_result.value_label.setText(f"{max_stress:.2f}")
         self.max_ext_result.value_label.setText(f"{max_ext:.3f}")
         self.data_points_result.value_label.setText(str(len(self.test_data)))
     
@@ -550,17 +817,45 @@ class MainWindow(QMainWindow):
         # Clear previous data
         self.test_data.clear()
         self.plot_curve.setData([], [])
+        self.max_force_marker.setData([], [])
+        self.yield_point_marker.setData([], [])
+        
+        # Reset tracking variables
+        self.cumulative_energy = 0.0
+        self.last_data_time = 0
+        self.test_results = None
+        
+        # Reset live displays
+        self.live_stress.value_label.setText("0.00")
+        self.live_strain.value_label.setText("0.000")
+        self.live_rate.value_label.setText("0.00")
+        self.live_energy.value_label.setText("0.000")
+        self.test_time_label.setText("Time: 00:00.0")
+        self.test_stage_label.setText("Stage: Pre-load")
         
         # Reset results
         self.max_force_result.value_label.setText("0.00")
+        self.max_stress_result.value_label.setText("0.00")
         self.max_ext_result.value_label.setText("0.000")
         self.data_points_result.value_label.setText("0")
+        
+        # Update analyzer with current config
+        self.analyzer = ResultsAnalyzer(
+            self.config.specimen.gauge_length,
+            self.config.specimen.cross_section_area
+        )
         
         self.serial.start_test()
     
     def _stop_test(self):
         """Stop tensile test."""
         self.serial.stop_test()
+        
+        # Calculate final results
+        if len(self.test_data) > 10:
+            self._calculate_final_results()
+            self.test_stage_label.setText("Stage: Complete")
+            self.test_stage_label.setStyleSheet("color: #4caf50; font-weight: bold;")
     
     def _pause_test(self):
         """Pause tensile test."""
