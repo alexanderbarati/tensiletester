@@ -8,8 +8,9 @@ cmake_minimum_required(VERSION 3.13)
 # Set PICO_SDK_PATH environment variable or set it here
 # set(PICO_SDK_PATH "/path/to/pico-sdk")
 
-# Include the Pico SDK
-include($ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake)
+
+# Include the Pico SDK import CMake file from the project root
+include(pico_sdk_import.cmake)
 
 # Project name and version
 project(TensileTester
@@ -21,6 +22,7 @@ project(TensileTester
 # C/C++ Standards
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
+
 
 # Initialize the Pico SDK (must be after project())
 pico_sdk_init()
